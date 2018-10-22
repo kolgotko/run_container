@@ -1,0 +1,10 @@
+[package]
+name = "run_container"
+version = "0.1.0"
+authors = ["Igor Bykov <igorb.dev@websm.io>"]
+edition = "2018"
+
+[dependencies]
+libjail = { git = "https://github.com/kolgotko/libjail" }
+serde_json = "*"
+clap = "*"
