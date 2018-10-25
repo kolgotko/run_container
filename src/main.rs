@@ -2,144 +2,84 @@ extern crate libjail;
 extern crate serde_json;
 extern crate clap;
 extern crate nix;
+extern crate signal_hook;
 
 use libjail::*;
-use nix::unistd::{fork, ForkResult};
+use nix::unistd::{fork, ForkResult, close};
 use std::error::Error;
-use std::process::Command;
+use std::process;
 use std::collections::HashMap;
 use std::thread;
 use std::os::unix::net::UnixStream;
+use std::os::unix::io::AsRawFd;
+use std::net::Shutdown;
+use std::io::Read;
+use std::io::Write;
 
-struct Container {
-    name: String,
-}
-
-impl Container {
-
-    fn new() -> Self {
-
-        unimplemented!();
-
-    }
-
-}
-
-fn mount_nullfs(src: impl Into<String>, dst: impl Into<String>, options: Vec<String>) 
-    -> Result<(), Box<Error>> {
-
-        unimplemented!();
-        let options: Vec<String> = options.into_iter()
-            .map(|item| item.into())
-            .collect();
-
-        let mut args: Vec<String> = Vec::new();
-
-        if options.len() > 0 {
-
-            args.extend_from_slice(&["-o".into()]);
-            args.extend(options);
-
-        }
-
-        args.push(src.into());
-        args.push(dst.into());
-
-        let ecode = Command::new("/sbin/mount_nullfs")
-            .args(args.as_slice())
-            .spawn()?
-            .wait()?;
-
-        if let Some(code) = ecode.code() {
-
-
-        
-        }
-
-        Ok(())
-
-    }
 
 fn main() -> Result<(), Box<Error>> {
 
-    let command = "top";
-    let programm = std::env::current_exe().unwrap();
-    let slave = match std::env::var("SLAVE") {
-        Ok(_) => true,
-        _ => false,
-    };
-
-    if slave { child_main(); }
-    else {
-
-        let socket = UnixStream::connect("/tmp/run_container.unix")?;
-
-        thread::spawn(move || -> Result<(), Box<Error + Send + Sync>> {
-
-            Command::new(programm)
-                .env("SLAVE", "1")
-                .spawn()?
-                .wait();
-
-            Ok(())
-
-        });
-
-        parent_main();
-
-    }
-
-    // let result = mount_nullfs("/usr/local/jmaker", "/mnt", vec![]);
-    // println!("{:?}", result);
-
-
-    // match fork()? {
-    //     ForkResult::Parent{ child } => {
-    //         println!("child pid: {}", child);
-    //         parent_main()?; 
-    //     },
-    //     ForkResult::Child => { child_main()?; },
-    // }
-
-    Ok(())
-
-}
-
-fn child_main() -> Result<(), Box<Error>> {
-
-    println!("i am child");
-
-    let mut stream = UnixStream::connect("/tmp/run_container.unix")?;
-    let path = "/jails/freebsd112".to_string();
-
+    println!("mounts()");
     let mut rules: HashMap<Val, Val> = HashMap::new();
-    rules.insert("path".into(), path.into());
+    rules.insert("path".into(), "/jails/freebsd112".into());
     rules.insert("name".into(), "freebsd112".into());
     rules.insert("host.hostname".into(), "freebsd112.service.jmaker".into());
     rules.insert("allow.raw_sockets".into(), true.into());
     rules.insert("allow.socket_af".into(), true.into());
     rules.insert("ip4".into(), JAIL_SYS_INHERIT.into());
+    rules.insert("persist".into(), true.into());
 
-    let jid = libjail::set(rules, Action::create() + Modifier::attach())?;
 
-    use std::io::Write;
-    stream.write_all(&[jid as u8]);
-    println!("jid: {:?}", jid);
 
-    Command::new("top")
-        .spawn()?
-        .wait();
+    let (mut master, mut slave) = UnixStream::pair()?;
 
-    libjail::remove(jid)?;
+    println!("persist_jail()");
+    let jid = libjail::set(rules, Action::create())?;
+    println!("create_child[fork()]()");
 
-    Ok(())
+    let sig_int_id = unsafe { 
+        signal_hook::register(signal_hook::SIGINT, move || {
+            libjail::remove(jid); 
+            process::abort();
+        })
+    }?;
 
-}
+    let sig_term_id = unsafe { 
+        signal_hook::register(signal_hook::SIGTERM, move || {
+            libjail::remove(jid); 
+            process::abort();
+        })
+    }?;
 
-fn parent_main() -> Result<(), Box<Error>> {
+    match fork()? {
+        ForkResult::Parent{ child } => {
 
-    println!("i am parent");
-    loop { }
+            close(slave.as_raw_fd())?;
+
+            println!("child pid: {}", child);
+            let mut buffer: Vec<u8> = Vec::new();
+            master.read_to_end(&mut buffer)?;
+
+            libjail::remove(jid)?;
+            println!("umounts()");
+            println!("master_exit()");
+
+        },
+        ForkResult::Child => {
+
+            close(master.as_raw_fd())?;
+
+            libjail::attach(jid)?;
+            process::Command::new("ping")
+                .args(&["ya.ru"])
+                .spawn()?
+                .wait()?;
+
+            println!("slave_exit()");
+
+        },
+    }
+
     Ok(())
 
 }
