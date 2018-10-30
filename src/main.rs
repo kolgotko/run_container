@@ -15,9 +15,66 @@ use std::os::unix::io::AsRawFd;
 use std::net::Shutdown;
 use std::io::Read;
 use std::io::Write;
+use std::path::Path;
+
+use std::fs::File;
+use serde_json::from_reader;
+use serde_json::Value as JsonValue;
 
 
 fn main() -> Result<(), Box<Error>> {
+
+    let container_path = Path::new("/usr/local/jmaker/containers/ac-bt");
+    let rootfs = container_path.join("rootfs");
+    let manifest = container_path.join("manifest.json");
+    let reader = File::open(&manifest)?;
+    let json: serde_json::Value = from_reader(reader)?;
+    let name = json.get("name").unwrap();
+    let json_rules = json.get("rules").unwrap();
+
+    println!("container: {:?}", container_path);
+    println!("rootfs: {:?}", rootfs);
+    println!("manifest: {:?}", manifest);
+    println!("name: {:?}", name);
+
+    let map = json_rules.as_object().unwrap();
+    let mut rules: HashMap<Val, Val> = HashMap::new();
+    let all_rules = get_all_types_of_rules();
+
+    for (rule, rule_type) in all_rules {
+        let value = json.get(rule).unwrap();
+
+        match rule_type {
+            RuleType::Int => {
+                let int = value.as_u64().unwrap() as i32;
+                println!("{:?}", int);
+            },
+            RuleType::Ulong => {
+                let int = value.as_u64().unwrap();
+                println!("{:?}", int);
+            },
+            RuleType::String => {
+                let st = value.as_str().unwrap();
+                println!("{:?}", st);
+            },
+            RuleType::Ip4 => {
+                let st = value.as_str().unwrap();
+                let ip = st.parse::<Ipv4Addr>().unwrap();
+                println!("{:?}", ip);
+            },
+            _ => (),
+        }
+        println!("{:?}", value);
+    }
+
+    for (key, value) in map.iter() {
+
+        println!("key: {:?}, value: {:?}", key, value);
+
+    }
+
+    panic!();
+
 
     println!("mounts()");
     let mut rules: HashMap<Val, Val> = HashMap::new();
