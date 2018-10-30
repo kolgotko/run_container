@@ -5,7 +5,7 @@ extern crate nix;
 extern crate signal_hook;
 
 use libjail::*;
-use nix::unistd::{fork, ForkResult, close};
+use nix::unistd::{fork, ForkResult, close, getppid};
 use std::error::Error;
 use std::process;
 use std::collections::HashMap;
@@ -85,8 +85,6 @@ fn main() -> Result<(), Box<Error>> {
     rules.insert("allow.socket_af".into(), true.into());
     rules.insert("ip4".into(), JAIL_SYS_INHERIT.into());
     rules.insert("persist".into(), true.into());
-
-
 
     let (mut master, mut slave) = UnixStream::pair()?;
 
