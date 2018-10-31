@@ -4,11 +4,13 @@ extern crate clap;
 extern crate nix;
 extern crate signal_hook;
 extern crate run_container;
+extern crate lazy_static;
 
 use libjail::*;
 use libjail::Val as JailValue;
 use run_container::AsJailMap;
 use nix::unistd::{fork, ForkResult, close, getppid};
+use lazy_static::lazy_static;
 use std::error::Error;
 use std::process;
 use std::collections::HashMap;
@@ -25,15 +27,73 @@ use std::fs::File;
 use serde_json::from_reader;
 use serde_json::Value as JsonValue;
 
+use std::sync::{Arc, Mutex};
+
+lazy_static! {
+
+    static ref WORKING_JAILS: Arc<Mutex<Vec<i32>>> = {
+
+        let vec: Vec<i32> = Vec::new();
+        let mutex = Mutex::new(vec);
+        let arc = Arc::new(mutex);
+        arc
+
+    };
+
+}
+
+fn process_abort() {
+
+    let ref_jails = WORKING_JAILS.clone();
+    let mut jails = ref_jails.lock().unwrap();
+
+    for jid in jails.drain(0..) {
+        libjail::remove(jid); 
+    }
+
+    process::abort();
+
+}
+
 
 fn main() -> Result<(), Box<Error>> {
 
-    let container_path = Path::new("/usr/local/jmaker/containers/ac-bt");
-    let rootfs = container_path.join("rootfs");
+    let (int, term) = unsafe { 
+        let int = signal_hook::register(signal_hook::SIGINT, process_abort)?;
+        let term = signal_hook::register(signal_hook::SIGTERM, process_abort)?;
+        (int, term)
+    };
+
+    let child0 = thread::spawn(move || {
+
+        run("/usr/local/jmaker/containers/ac-bt".into());
+
+    });
+
+    let child1 = thread::spawn(move || {
+
+        run("/usr/local/jmaker/containers/freebsd112".into());
+
+    });
+
+
+    child0.join();
+    child1.join();
+
+
+    Ok(())
+
+}
+
+fn run(container_path: String) -> Result<(), Box<Error>> {
+
+    let container_path = Path::new(&container_path);
+    let rootfs = container_path.join("rootfs").to_string_lossy().to_string();
     let manifest = container_path.join("manifest.json");
     let reader = File::open(&manifest)?;
     let json: serde_json::Value = from_reader(reader)?;
     let name = json.get("name").unwrap();
+    let name = name.as_str().ok_or("name conversion error")?;
     let json_rules = json.get("rules").unwrap();
 
     println!("container: {:?}", container_path);
@@ -42,47 +102,28 @@ fn main() -> Result<(), Box<Error>> {
     println!("name: {:?}", name);
 
     let json_map = json_rules.as_object().unwrap();
-    let jail_map = json_map.as_jail_map()?;
-    println!("{:#?}", jail_map);
+    let mut jail_map = json_map.as_jail_map()?;
+    jail_map.insert("path".into(), rootfs.into());
+    jail_map.insert("name".into(), name.into());
+    jail_map.insert("persist".into(), true.into());
 
-    // for (key, value) in map.iter() {
+    // jail_map.remove(&"ip4.addr".into());
+    // jail_map.remove(&"ip6.addr".into());
 
-    //     println!("key: {:?}, value: {:?}", key, value);
+    let mut rules = jail_map;
 
-    // }
-
-    panic!();
-
-
-    println!("mounts()");
-    let mut rules: HashMap<Val, Val> = HashMap::new();
-    rules.insert("path".into(), "/jails/freebsd112".into());
-    rules.insert("name".into(), "freebsd112".into());
-    rules.insert("host.hostname".into(), "freebsd112.service.jmaker".into());
-    rules.insert("allow.raw_sockets".into(), true.into());
-    rules.insert("allow.socket_af".into(), true.into());
-    rules.insert("ip4".into(), JAIL_SYS_INHERIT.into());
-    rules.insert("persist".into(), true.into());
-
+    println!("{:#?}", rules);
     let (mut master, mut slave) = UnixStream::pair()?;
 
     println!("persist_jail()");
     let jid = libjail::set(rules, Action::create())?;
     println!("create_child[fork()]()");
 
-    let sig_int_id = unsafe { 
-        signal_hook::register(signal_hook::SIGINT, move || {
-            libjail::remove(jid); 
-            process::abort();
-        })
-    }?;
-
-    let sig_term_id = unsafe { 
-        signal_hook::register(signal_hook::SIGTERM, move || {
-            libjail::remove(jid); 
-            process::abort();
-        })
-    }?;
+    {
+        let ref_jails = WORKING_JAILS.clone();
+        let mut jails = ref_jails.lock().unwrap();
+        jails.push(jid);
+    }
 
     match fork()? {
         ForkResult::Parent{ child } => {
@@ -103,8 +144,8 @@ fn main() -> Result<(), Box<Error>> {
             close(master.as_raw_fd())?;
 
             libjail::attach(jid)?;
-            process::Command::new("ping")
-                .args(&["ya.ru"])
+            process::Command::new("gstat")
+                // .args(&["ya.ru"])
                 .spawn()?
                 .wait()?;
 
