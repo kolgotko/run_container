@@ -3,8 +3,11 @@ extern crate serde_json;
 extern crate clap;
 extern crate nix;
 extern crate signal_hook;
+extern crate run_container;
 
 use libjail::*;
+use libjail::Val as JailValue;
+use run_container::AsJailMap;
 use nix::unistd::{fork, ForkResult, close, getppid};
 use std::error::Error;
 use std::process;
@@ -16,6 +19,7 @@ use std::net::Shutdown;
 use std::io::Read;
 use std::io::Write;
 use std::path::Path;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use std::fs::File;
 use serde_json::from_reader;
@@ -37,41 +41,15 @@ fn main() -> Result<(), Box<Error>> {
     println!("manifest: {:?}", manifest);
     println!("name: {:?}", name);
 
-    let map = json_rules.as_object().unwrap();
-    let mut rules: HashMap<Val, Val> = HashMap::new();
-    let all_rules = get_all_types_of_rules();
+    let json_map = json_rules.as_object().unwrap();
+    let jail_map = json_map.as_jail_map()?;
+    println!("{:#?}", jail_map);
 
-    for (rule, rule_type) in all_rules {
-        let value = json.get(rule).unwrap();
+    // for (key, value) in map.iter() {
 
-        match rule_type {
-            RuleType::Int => {
-                let int = value.as_u64().unwrap() as i32;
-                println!("{:?}", int);
-            },
-            RuleType::Ulong => {
-                let int = value.as_u64().unwrap();
-                println!("{:?}", int);
-            },
-            RuleType::String => {
-                let st = value.as_str().unwrap();
-                println!("{:?}", st);
-            },
-            RuleType::Ip4 => {
-                let st = value.as_str().unwrap();
-                let ip = st.parse::<Ipv4Addr>().unwrap();
-                println!("{:?}", ip);
-            },
-            _ => (),
-        }
-        println!("{:?}", value);
-    }
+    //     println!("key: {:?}, value: {:?}", key, value);
 
-    for (key, value) in map.iter() {
-
-        println!("key: {:?}, value: {:?}", key, value);
-
-    }
+    // }
 
     panic!();
 
