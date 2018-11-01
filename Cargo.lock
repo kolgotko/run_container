@@ -117,7 +117,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "libjail"
 version = "0.1.0"
-source = "git+https://github.com/kolgotko/libjail#7fd0ec92b227fea71eedd9c845700e3b07c3e8e0"
+source = "git+https://github.com/kolgotko/libjail#13421ed896d408537959ca8c9b363244a6cd57fc"
 dependencies = [
  "lazy_static 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.43 (registry+https://github.com/rust-lang/crates.io-index)",

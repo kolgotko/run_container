@@ -24,9 +24,6 @@ impl AsJailMap for JsonMap<String, JsonValue> {
 
         for (rule, rule_type) in all_rules.iter() {
 
-            let rule = rule.trim_left_matches(SYSCTL_PREFIX)
-                .trim_matches('.');
-
             let jail_key: JailValue = rule.clone().into();
 
             let value = self.get(rule);
