@@ -5,6 +5,7 @@ extern crate nix;
 extern crate signal_hook;
 extern crate run_container;
 extern crate lazy_static;
+extern crate jsonrpc_core;
 
 use libjail::*;
 use libjail::Val as JailValue;
@@ -58,7 +59,7 @@ fn process_abort() {
 
 fn main() -> Result<(), Box<Error>> {
 
-    let (int, term) = unsafe { 
+    let (int, term) = unsafe {
         let int = signal_hook::register(signal_hook::SIGINT, process_abort)?;
         let term = signal_hook::register(signal_hook::SIGTERM, process_abort)?;
         (int, term)
