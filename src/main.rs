@@ -5,7 +5,6 @@ extern crate nix;
 extern crate signal_hook;
 extern crate run_container;
 extern crate lazy_static;
-extern crate jsonrpc_core;
 
 use libjail::*;
 use libjail::Val as JailValue;
@@ -23,6 +22,7 @@ use std::io::Read;
 use std::io::Write;
 use std::path::Path;
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::os::unix::net::{UnixListener};
 
 use std::fs::File;
 use serde_json::from_reader;
@@ -58,6 +58,30 @@ fn process_abort() {
 
 
 fn main() -> Result<(), Box<Error>> {
+
+
+    Ok(())
+
+}
+
+fn __main() -> Result<(), Box<Error>> {
+
+    let listener = UnixListener::bind("/tmp/run_container.sock")?;
+
+    for stream in listener.incoming() {
+
+        // let mut buffer: Vec<u8> = Vec::new();
+        let json: serde_json::Value = from_reader(stream?)?;
+        // stream?.read_to_end(&mut buffer);
+        // println!("connection! {:?}", buffer);
+        println!("connection! {:#?}", json);
+    
+    }
+
+    Ok(())
+}
+
+fn _main() -> Result<(), Box<Error>> {
 
     let (int, term) = unsafe {
         let int = signal_hook::register(signal_hook::SIGINT, process_abort)?;
