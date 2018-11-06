@@ -11,3 +11,5 @@ clap = "*"
 nix = "*"
 lazy_static = "*"
 signal-hook = "*"
+jsonrpc-core = "*"
+

@@ -5,7 +5,9 @@ extern crate nix;
 extern crate signal_hook;
 extern crate run_container;
 extern crate lazy_static;
+extern crate jsonrpc_core;
 
+use std::fs;
 use libjail::*;
 use libjail::Val as JailValue;
 use run_container::AsJailMap;
@@ -30,6 +32,13 @@ use serde_json::Value as JsonValue;
 
 use std::sync::{Arc, Mutex};
 
+use jsonrpc_core::IoHandler as RpcHandler;
+use jsonrpc_core::Params as RpcParams;
+use jsonrpc_core::Value as RpcValue;
+use jsonrpc_core::Error as RpcError;
+
+const SOCKET_FILE: &str = "/tmp/run_container.sock";
+
 lazy_static! {
 
     static ref WORKING_JAILS: Arc<Mutex<Vec<i32>>> = {
@@ -41,12 +50,23 @@ lazy_static! {
 
     };
 
+    static ref RPC_HANDLER: RpcHandler = {
+
+        let mut rpc_handler = RpcHandler::new();
+        rpc_handler.add_method("run_container", run_container);
+        rpc_handler.add_method("stop_container", stop_container);
+        rpc_handler
+
+    };
+
 }
 
 fn process_abort() {
 
     let ref_jails = WORKING_JAILS.clone();
     let mut jails = ref_jails.lock().unwrap();
+
+    fs::remove_file(SOCKET_FILE);
 
     for jid in jails.drain(0..) {
         libjail::remove(jid); 
@@ -57,91 +77,40 @@ fn process_abort() {
 }
 
 
-fn main() -> Result<(), Box<Error>> {
 
+fn stop_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
-    Ok(())
+    let ref_jails = WORKING_JAILS.clone();
+    let mut jails = ref_jails.lock().unwrap();
 
-}
+    unimplemented!();
 
-fn __main() -> Result<(), Box<Error>> {
-
-    let listener = UnixListener::bind("/tmp/run_container.sock")?;
-
-    for stream in listener.incoming() {
-
-        // let mut buffer: Vec<u8> = Vec::new();
-        let json: serde_json::Value = from_reader(stream?)?;
-        // stream?.read_to_end(&mut buffer);
-        // println!("connection! {:?}", buffer);
-        println!("connection! {:#?}", json);
-    
-    }
-
-    Ok(())
-}
-
-fn _main() -> Result<(), Box<Error>> {
-
-    let (int, term) = unsafe {
-        let int = signal_hook::register(signal_hook::SIGINT, process_abort)?;
-        let term = signal_hook::register(signal_hook::SIGTERM, process_abort)?;
-        (int, term)
-    };
-
-    let child0 = thread::spawn(move || {
-
-        run("/usr/local/jmaker/containers/ac-bt".into());
-
-    });
-
-    let child1 = thread::spawn(move || {
-
-        run("/usr/local/jmaker/containers/freebsd112".into());
-
-    });
-
-
-    child0.join();
-    child1.join();
-
-
-    Ok(())
+    jails.contains(&5);
+    Ok(RpcValue::Null)
 
 }
 
-fn run(container_path: String) -> Result<(), Box<Error>> {
+fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
-    let container_path = Path::new(&container_path);
-    let rootfs = container_path.join("rootfs").to_string_lossy().to_string();
-    let manifest = container_path.join("manifest.json");
-    let reader = File::open(&manifest)?;
-    let json: serde_json::Value = from_reader(reader)?;
-    let name = json.get("name").unwrap();
-    let name = name.as_str().ok_or("name conversion error")?;
-    let json_rules = json.get("rules").unwrap();
+    let json: JsonValue = params.parse()?;
+    println!("params: {:#?}\n", json["body"]);
 
-    println!("container: {:?}", container_path);
-    println!("rootfs: {:?}", rootfs);
-    println!("manifest: {:?}", manifest);
-    println!("name: {:?}", name);
+    let path = &json["body"]["path"].as_str().unwrap();
+    let rootfs = &json["body"]["rootfs"].as_str().unwrap();
+    let name = &json["body"]["name"].as_str().unwrap();
+    let rules = &json["body"]["rules"].as_object().unwrap();
 
-    let json_map = json_rules.as_object().unwrap();
-    let mut jail_map = json_map.as_jail_map()?;
-    jail_map.insert("path".into(), rootfs.into());
-    jail_map.insert("name".into(), name.into());
+    let mut jail_map = rules.as_jail_map().unwrap();
+    jail_map.insert("path".into(), rootfs.to_owned().into());
+    jail_map.insert("name".into(), name.to_owned().into());
     jail_map.insert("persist".into(), true.into());
 
-    // jail_map.remove(&"ip4.addr".into());
-    // jail_map.remove(&"ip6.addr".into());
+    println!("{:?}", jail_map);
 
-    let mut rules = jail_map;
-
-    println!("{:#?}", rules);
-    let (mut master, mut slave) = UnixStream::pair()?;
+    let (mut master, mut slave) = UnixStream::pair().unwrap();
 
     println!("persist_jail()");
-    let jid = libjail::set(rules, Action::create())?;
+    let jid = libjail::set(jail_map, Action::create()).unwrap();
     println!("create_child[fork()]()");
 
     {
@@ -150,35 +119,71 @@ fn run(container_path: String) -> Result<(), Box<Error>> {
         jails.push(jid);
     }
 
-    match fork()? {
+    match fork().unwrap() {
         ForkResult::Parent{ child } => {
 
-            close(slave.as_raw_fd())?;
+            close(slave.as_raw_fd()).unwrap();
 
             println!("child pid: {}", child);
             let mut buffer: Vec<u8> = Vec::new();
-            master.read_to_end(&mut buffer)?;
+            master.read_to_end(&mut buffer).unwrap();
 
-            libjail::remove(jid)?;
+            libjail::remove(jid).unwrap();
             println!("umounts()");
             println!("master_exit()");
 
         },
         ForkResult::Child => {
 
-            close(master.as_raw_fd())?;
+            close(master.as_raw_fd()).unwrap();
 
-            libjail::attach(jid)?;
-            process::Command::new("gstat")
-                // .args(&["ya.ru"])
-                .spawn()?
-                .wait()?;
+            libjail::attach(jid).unwrap();
+            process::Command::new("nc")
+                .args(&["-l", "9000"])
+                .spawn().unwrap()
+                .wait().unwrap();
 
             println!("slave_exit()");
 
         },
     }
 
-    Ok(())
+    Ok(RpcValue::Null)
 
 }
+
+fn main() -> Result<(), Box<Error>> {
+
+    let listener = UnixListener::bind(SOCKET_FILE)?;
+
+    let (int, term) = unsafe {
+        let int = signal_hook::register(signal_hook::SIGINT, process_abort)?;
+        let term = signal_hook::register(signal_hook::SIGTERM, process_abort)?;
+        (int, term)
+    };
+
+    for stream in listener.incoming() {
+
+        thread::spawn(move || -> Result<(), Box<Error + Send + Sync>> {
+
+            let rpc_handler = &RPC_HANDLER;
+            let mut stream = stream?;
+
+            let mut buffer: Vec<u8> = Vec::new();
+            stream.read_to_end(&mut buffer);
+            let recv_string = String::from_utf8(buffer)?;
+            let result = rpc_handler.handle_request_sync(&recv_string).unwrap();
+
+            println!("result: {:?}", result);
+
+            stream.write_all(result.as_bytes())?;
+
+            Ok(())
+
+        });
+
+    }
+
+    Ok(())
+}
+
