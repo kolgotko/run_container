@@ -8,10 +8,12 @@ extern crate lazy_static;
 extern crate jsonrpc_core;
 
 use std::fs;
+use std::ffi::CString;
 use libjail::*;
 use libjail::Val as JailValue;
 use run_container::AsJailMap;
-use nix::unistd::{fork, ForkResult, close, getppid};
+use nix::unistd::{fork, ForkResult, close, getppid, execvp};
+use nix::sys::wait::waitpid;
 use lazy_static::lazy_static;
 use std::error::Error;
 use std::process;
@@ -107,8 +109,6 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
     println!("{:?}", jail_map);
 
-    let (mut master, mut slave) = UnixStream::pair().unwrap();
-
     println!("persist_jail()");
     let jid = libjail::set(jail_map, Action::create()).unwrap();
     println!("create_child[fork()]()");
@@ -122,11 +122,9 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
     match fork().unwrap() {
         ForkResult::Parent{ child } => {
 
-            close(slave.as_raw_fd()).unwrap();
-
             println!("child pid: {}", child);
-            let mut buffer: Vec<u8> = Vec::new();
-            master.read_to_end(&mut buffer).unwrap();
+
+            waitpid(child, None);
 
             libjail::remove(jid).unwrap();
             println!("umounts()");
@@ -135,15 +133,15 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
         },
         ForkResult::Child => {
 
-            close(master.as_raw_fd()).unwrap();
-
             libjail::attach(jid).unwrap();
-            process::Command::new("nc")
-                .args(&["-l", "9000"])
-                .spawn().unwrap()
-                .wait().unwrap();
 
-            println!("slave_exit()");
+            let command = CString::new("nc").unwrap();
+            execvp(&command, &[
+               CString::new("").unwrap(),
+               CString::new("-l").unwrap(),
+               CString::new("9000").unwrap(),
+            ])
+                .unwrap();
 
         },
     }
