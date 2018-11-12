@@ -1,4 +1,5 @@
 extern crate libjail;
+extern crate libmount;
 extern crate serde_json;
 extern crate clap;
 extern crate nix;
@@ -9,6 +10,7 @@ extern crate jsonrpc_core;
 
 use std::fs;
 use std::ffi::CString;
+use libmount::*;
 use libjail::*;
 use libjail::Val as JailValue;
 use run_container::AsJailMap;

@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 libjail = { git = "https://github.com/kolgotko/libjail" }
+libmount = { git = "https://github.com/kolgotko/libmount" }
 serde_json = "*"
 clap = "*"
 nix = "*"
