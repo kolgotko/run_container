@@ -101,6 +101,7 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
     let path = &json["body"]["path"].as_str().unwrap();
     let rootfs = &json["body"]["rootfs"].as_str().unwrap();
+    let rootfs_path = Path::new(&rootfs);
     let name = &json["body"]["name"].as_str().unwrap();
     let rules = &json["body"]["rules"].as_object().unwrap();
 
@@ -110,6 +111,19 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
     jail_map.insert("persist".into(), true.into());
 
     println!("{:?}", jail_map);
+
+    println!("mounts!");
+
+    let devfs = rootfs_path.join("/dev");
+    let devfs = devfs.to_str().unwrap();
+    let fdescfs = rootfs_path.join("/dev/fd");
+    let fdescfs = fdescfs.to_str().unwrap();
+    let procfs = rootfs_path.join("/proc");
+    let procfs = procfs.to_str().unwrap();
+
+    mount_devfs(devfs, None).unwrap();
+    mount_fdescfs(fdescfs, None).unwrap();
+    mount_procfs(procfs, None).unwrap();
 
     println!("persist_jail()");
     let jid = libjail::set(jail_map, Action::create()).unwrap();
