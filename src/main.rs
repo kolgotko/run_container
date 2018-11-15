@@ -7,11 +7,13 @@ extern crate signal_hook;
 extern crate run_container;
 extern crate lazy_static;
 extern crate jsonrpc_core;
+extern crate command_pattern;
 
 use std::fs;
 use std::ffi::CString;
 use libmount::*;
 use libjail::*;
+use command_pattern::*;
 use libjail::Val as JailValue;
 use run_container::AsJailMap;
 use nix::unistd::{fork, ForkResult, close, getppid, execvp};
@@ -40,6 +42,7 @@ use jsonrpc_core::IoHandler as RpcHandler;
 use jsonrpc_core::Params as RpcParams;
 use jsonrpc_core::Value as RpcValue;
 use jsonrpc_core::Error as RpcError;
+
 
 const SOCKET_FILE: &str = "/tmp/run_container.sock";
 
@@ -96,6 +99,7 @@ fn stop_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
 fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
+    let mut invoker = Invoker::new();
     let json: JsonValue = params.parse()?;
     println!("params: {:#?}\n", json["body"]);
 
@@ -115,15 +119,38 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
     println!("mounts!");
 
     let devfs = rootfs_path.join("/dev");
-    let devfs = devfs.to_str().unwrap();
+    let devfs = devfs.to_str().unwrap().to_owned();
     let fdescfs = rootfs_path.join("/dev/fd");
-    let fdescfs = fdescfs.to_str().unwrap();
+    let fdescfs = fdescfs.to_str().unwrap().to_owned();
     let procfs = rootfs_path.join("/proc");
-    let procfs = procfs.to_str().unwrap();
+    let procfs = procfs.to_str().unwrap().to_owned();
 
-    mount_devfs(devfs, None).unwrap();
-    mount_fdescfs(fdescfs, None).unwrap();
-    mount_procfs(procfs, None).unwrap();
+    let for_exec = (devfs, fdescfs, procfs);
+    let for_unexec = for_exec.clone();
+
+    exec_or_undo_all!(invoker, {
+        exec: move {
+
+            let (devfs, fdescfs, procfs) = for_exec.clone();
+
+            mount_devfs(devfs, None)?;
+            mount_fdescfs(fdescfs, None)?;
+            mount_procfs(procfs, None)?;
+
+            Ok(())
+        },
+        unexec: move {
+
+            let (devfs, fdescfs, procfs) = for_unexec.clone();
+
+            unmount(procfs, Some(libc_mount::MNT_FORCE as i32))?;
+            unmount(fdescfs, Some(libc_mount::MNT_FORCE as i32))?;
+            unmount(devfs, Some(libc_mount::MNT_FORCE as i32))?;
+
+            Ok(())
+        }
+    });
+
 
     println!("persist_jail()");
     let jid = libjail::set(jail_map, Action::create()).unwrap();
@@ -144,6 +171,8 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
             libjail::remove(jid).unwrap();
             println!("umounts()");
+
+            invoker.undo_all();
             println!("master_exit()");
 
         },
