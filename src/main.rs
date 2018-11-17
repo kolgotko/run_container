@@ -11,6 +11,7 @@ extern crate command_pattern;
 
 use std::fs;
 use std::ffi::CString;
+use std::any::Any;
 use libmount::*;
 use libjail::*;
 use command_pattern::*;
@@ -99,7 +100,7 @@ fn stop_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
 fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
-    let mut invoker = Invoker::new();
+    let mut invoker: Invoker<Box<Any>> = Invoker::new();
     let json: JsonValue = params.parse()?;
     println!("params: {:#?}\n", json["body"]);
 
@@ -137,7 +138,7 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
             mount_fdescfs(fdescfs, None)?;
             mount_procfs(procfs, None)?;
 
-            Ok(())
+            Ok(Box::new(()) as Box<dyn Any>)
         },
         unexec: move {
 
@@ -149,11 +150,37 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
             Ok(())
         }
-    });
+    }).unwrap();
 
 
     println!("persist_jail()");
-    let jid = libjail::set(jail_map, Action::create()).unwrap();
+    let jail_name = name.to_string();
+    let jid = exec_or_undo_all!(invoker, {
+        exec: move {
+
+            let jid = libjail::set(jail_map.to_owned(), Action::create())?;
+            Ok(Box::new(jid) as Box<Any>)
+
+        },
+        unexec: move {
+
+            let rules = libjail::get_rules(jail_name.to_owned(), vec!["jid"])?;
+            let jid = rules.get("jid").ok_or("not found property jid")?;
+
+            if let libjail::OutVal::I32(value) = jid {
+                libjail::remove(*value)?;
+            }
+
+            Ok(())
+
+        }
+    }).unwrap();
+
+    let jid: i32 = jid.downcast_ref::<i32>()
+        .ok_or("jid cast error.")
+        .unwrap()
+        .to_owned();
+
     println!("create_child[fork()]()");
 
     {
@@ -162,6 +189,18 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
         jails.push(jid);
     }
 
+    let fork_result = exec_or_undo_all!(invoker, {
+
+        let result = fork()?;
+        Ok(Box::new(result) as Box<Any>)
+
+    }).unwrap();
+
+    // let fork_result: i32 = jid.downcast_ref::<i32>()
+    //     .ok_or("jid cast error.")
+    //     .unwrap()
+    //     .to_owned();
+
     match fork().unwrap() {
         ForkResult::Parent{ child } => {
 
@@ -169,8 +208,8 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
             waitpid(child, None);
 
-            libjail::remove(jid).unwrap();
-            println!("umounts()");
+            // libjail::remove(jid).unwrap();
+            // println!("umounts()");
 
             invoker.undo_all();
             println!("master_exit()");
