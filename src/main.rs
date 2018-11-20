@@ -118,6 +118,7 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
     let rootfs_path = Path::new(&rootfs);
     let name = &json["body"]["name"].as_str().unwrap();
     let rules = &json["body"]["rules"].as_object().unwrap();
+    let mounts = &json["body"]["mounts"].as_array().unwrap();
     let entry = &json["body"]["entry"].as_str().unwrap_or("");
     let command = &json["body"]["command"].as_str().unwrap_or("");
     let command = format!("{} {}", entry, command);
@@ -132,6 +133,7 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
     println!("mounts!");
 
     let devfs = rootfs_path.join("/dev");
+    println!("{:?}", devfs);
     let devfs = devfs.to_str().unwrap().to_owned();
     let fdescfs = rootfs_path.join("/dev/fd");
     let fdescfs = fdescfs.to_str().unwrap().to_owned();
@@ -163,6 +165,46 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
             Ok(())
         }
     }).unwrap();
+
+    for rule_mount in mounts.iter() {
+
+        let rule_mount = rule_mount.as_object().unwrap();
+        let src = rule_mount.get("src")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let dst = rule_mount.get("dst")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let dst = rootfs_path.join(dst);
+        let dst = dst.to_str().unwrap().to_owned();
+        let for_exec = (src, dst);
+        let for_unexec = for_exec.clone();
+
+        exec_or_undo_all!(invoker, {
+            exec: move {
+
+                let (src, dst) = for_exec.clone();
+
+                mount_nullfs(src.to_owned(), dst.to_owned(), None)?;
+                Ok(Box::new(()) as Box<dyn Any>)
+
+            },
+            unexec: move {
+
+                let (src, dst) = for_unexec.clone();
+                unmount(dst.to_owned(), None)?;
+                Ok(())
+
+            }
+        });
+
+    }
 
     println!("persist_jail()");
     let jail_name = name.to_string();
