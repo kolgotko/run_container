@@ -47,14 +47,23 @@ use jsonrpc_core::Error as RpcError;
 
 const SOCKET_FILE: &str = "/tmp/run_container.sock";
 
+type AnyInvoker = Invoker<Box<dyn Any>, Box<dyn Error>>;
+
 lazy_static! {
 
-    static ref WORKING_JAILS: Arc<Mutex<Vec<i32>>> = {
+    static ref WORKING_JAILS: Mutex<Vec<i32>> = {
 
         let vec: Vec<i32> = Vec::new();
         let mutex = Mutex::new(vec);
-        let arc = Arc::new(mutex);
-        arc
+        mutex
+
+    };
+
+    static ref NAMED_INVOKERS: Mutex<HashMap<String, AnyInvoker>> = {
+
+        let map: HashMap<String, AnyInvoker> = HashMap::new();
+        let mutex = Mutex::new(map);
+        mutex
 
     };
 
@@ -71,13 +80,16 @@ lazy_static! {
 
 fn process_abort() {
 
-    let ref_jails = WORKING_JAILS.clone();
-    let mut jails = ref_jails.lock().unwrap();
-
     fs::remove_file(SOCKET_FILE);
 
-    for jid in jails.drain(0..) {
-        libjail::remove(jid); 
+    let mut named_invokers = NAMED_INVOKERS
+        .lock()
+        .unwrap();
+
+    for (key, mut invoker) in named_invokers.drain() {
+
+        invoker.undo_all();
+
     }
 
     process::abort();
@@ -88,19 +100,16 @@ fn process_abort() {
 
 fn stop_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
-    let ref_jails = WORKING_JAILS.clone();
-    let mut jails = ref_jails.lock().unwrap();
 
     unimplemented!();
 
-    jails.contains(&5);
     Ok(RpcValue::Null)
 
 }
 
 fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
-    let mut invoker: Invoker<Box<Any>> = Invoker::new();
+    let mut invoker: AnyInvoker = Invoker::new();
     let json: JsonValue = params.parse()?;
     println!("params: {:#?}\n", json["body"]);
 
@@ -109,6 +118,9 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
     let rootfs_path = Path::new(&rootfs);
     let name = &json["body"]["name"].as_str().unwrap();
     let rules = &json["body"]["rules"].as_object().unwrap();
+    let entry = &json["body"]["entry"].as_str().unwrap_or("");
+    let command = &json["body"]["command"].as_str().unwrap_or("");
+    let command = format!("{} {}", entry, command);
 
     let mut jail_map = rules.as_jail_map().unwrap();
     jail_map.insert("path".into(), rootfs.to_owned().into());
@@ -152,7 +164,6 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
         }
     }).unwrap();
 
-
     println!("persist_jail()");
     let jail_name = name.to_string();
     let jid = exec_or_undo_all!(invoker, {
@@ -184,8 +195,7 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
     println!("create_child[fork()]()");
 
     {
-        let ref_jails = WORKING_JAILS.clone();
-        let mut jails = ref_jails.lock().unwrap();
+        let mut jails = WORKING_JAILS.lock().unwrap();
         jails.push(jid);
     }
 
@@ -196,34 +206,40 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
     }).unwrap();
 
-    // let fork_result: i32 = jid.downcast_ref::<i32>()
-    //     .ok_or("jid cast error.")
-    //     .unwrap()
-    //     .to_owned();
+    let fork_result: ForkResult = fork_result.downcast_ref::<ForkResult>()
+        .ok_or("fork_result cast error.")
+        .unwrap()
+        .to_owned();
 
-    match fork().unwrap() {
+    {
+        let mut named_invokers = NAMED_INVOKERS
+            .lock()
+            .unwrap();
+
+        named_invokers.insert(name.to_string(), invoker);
+    }
+
+    match fork_result {
         ForkResult::Parent{ child } => {
-
-            println!("child pid: {}", child);
 
             waitpid(child, None);
 
-            // libjail::remove(jid).unwrap();
-            // println!("umounts()");
+            let mut named_invokers = NAMED_INVOKERS
+                .lock()
+                .unwrap();
 
+            let mut invoker = named_invokers.remove(name.to_owned()).unwrap();
             invoker.undo_all();
-            println!("master_exit()");
 
         },
         ForkResult::Child => {
 
             libjail::attach(jid).unwrap();
 
-            let command = CString::new("nc").unwrap();
-            execvp(&command, &[
+            execvp(&CString::new("/bin/sh").unwrap(), &[
                CString::new("").unwrap(),
-               CString::new("-l").unwrap(),
-               CString::new("9000").unwrap(),
+               CString::new("-c").unwrap(),
+               CString::new(command).unwrap(),
             ])
                 .unwrap();
 
