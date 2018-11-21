@@ -37,6 +37,8 @@ impl AsJailMap for JsonMap<String, JsonValue> {
                         JsonValue::Bool(value) => value as i32,
                         JsonValue::String(value) => {
                             if value == "inherit" { JAIL_SYS_INHERIT }
+                            else if value == "new" { JAIL_SYS_NEW }
+                            else if value == "disable" { JAIL_SYS_DISABLE }
                             else {
                                 value.parse::<i32>()?
                             }

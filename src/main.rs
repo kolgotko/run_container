@@ -4,10 +4,15 @@ extern crate serde_json;
 extern crate clap;
 extern crate nix;
 extern crate signal_hook;
-extern crate run_container;
 extern crate lazy_static;
 extern crate jsonrpc_core;
 extern crate command_pattern;
+
+mod as_jail_map;
+use self::as_jail_map::AsJailMap;
+
+mod path_macros;
+use self::path_macros::*;
 
 use std::fs;
 use std::ffi::CString;
@@ -16,7 +21,6 @@ use libmount::*;
 use libjail::*;
 use command_pattern::*;
 use libjail::Val as JailValue;
-use run_container::AsJailMap;
 use nix::unistd::{fork, ForkResult, close, getppid, execvp};
 use nix::sys::wait::waitpid;
 use lazy_static::lazy_static;
@@ -132,12 +136,11 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
     println!("mounts!");
 
-    let devfs = rootfs_path.join("/dev");
-    println!("{:?}", devfs);
+    let devfs = path_join!(rootfs, "/dev");
     let devfs = devfs.to_str().unwrap().to_owned();
-    let fdescfs = rootfs_path.join("/dev/fd");
+    let fdescfs = path_join!(rootfs, "/dev/fd");
     let fdescfs = fdescfs.to_str().unwrap().to_owned();
-    let procfs = rootfs_path.join("/proc");
+    let procfs = path_join!(rootfs, "/proc");
     let procfs = procfs.to_str().unwrap().to_owned();
 
     let for_exec = (devfs, fdescfs, procfs);
@@ -178,10 +181,9 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
         let dst = rule_mount.get("dst")
             .unwrap()
             .as_str()
-            .unwrap()
-            .to_string();
+            .unwrap();
 
-        let dst = rootfs_path.join(dst);
+        let dst = path_join!(rootfs, dst);
         let dst = dst.to_str().unwrap().to_owned();
         let for_exec = (src, dst);
         let for_unexec = for_exec.clone();
