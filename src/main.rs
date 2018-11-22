@@ -51,7 +51,7 @@ use jsonrpc_core::Error as RpcError;
 
 const SOCKET_FILE: &str = "/tmp/run_container.sock";
 
-type AnyInvoker = Invoker<Box<dyn Any>, Box<dyn Error>>;
+type AnyInvoker = Invoker<Box<dyn Any>>;
 
 lazy_static! {
 
@@ -90,7 +90,7 @@ fn process_abort() {
         .lock()
         .unwrap();
 
-    for (key, mut invoker) in named_invokers.drain() {
+    for (_, mut invoker) in named_invokers.drain() {
 
         invoker.undo_all();
 
@@ -123,6 +123,7 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
     let name = &json["body"]["name"].as_str().unwrap();
     let rules = &json["body"]["rules"].as_object().unwrap();
     let mounts = &json["body"]["mounts"].as_array().unwrap();
+    let interface = &json["body"]["interface"].as_str().unwrap_or("");
     let entry = &json["body"]["entry"].as_str().unwrap_or("");
     let command = &json["body"]["command"].as_str().unwrap_or("");
     let command = format!("{} {}", entry, command);
@@ -236,13 +237,50 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
         .unwrap()
         .to_owned();
 
-    println!("create_child[fork()]()");
-
     {
         let mut jails = WORKING_JAILS.lock().unwrap();
         jails.push(jid);
     }
 
+    let vnet = if let Some(value) = rules.get("vnet") {
+        value.as_str().unwrap_or("disabled")
+    } else { "disabled" };
+
+    let exec_if = interface.to_string();
+    let unexec_if = interface.to_string();
+
+    if vnet == "new" && interface != &"" {
+
+        exec_or_undo_all!(invoker, {
+            exec: move {
+
+                process::Command::new("ifconfig")
+                    .args(&[&exec_if, "name", "eth0"])
+                    .spawn()?;
+
+                process::Command::new("ifconfig")
+                    .args(&["eth0", "vnet", &jid.to_string()])
+                    .spawn()?;
+
+                Ok(Box::new(()) as Box<dyn Any>)
+            },
+            unexec: move {
+
+                process::Command::new("ifconfig")
+                    .args(&["eth0", "-vnet", &jid.to_string()])
+                    .spawn();
+
+                process::Command::new("ifconfig")
+                    .args(&["eth0", "name", &unexec_if])
+                    .spawn()?;
+
+                Ok(())
+            }
+        }).unwrap();
+
+    }
+
+    println!("create_child[fork()]()");
     let fork_result = exec_or_undo_all!(invoker, {
 
         let result = fork()?;
@@ -272,7 +310,10 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
                 .lock()
                 .unwrap();
 
-            let mut invoker = named_invokers.remove(name.to_owned()).unwrap();
+            let mut invoker = named_invokers
+                .remove(name.to_owned())
+                .unwrap();
+
             invoker.undo_all();
 
         },
