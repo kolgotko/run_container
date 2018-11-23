@@ -14,6 +14,7 @@ use self::as_jail_map::AsJailMap;
 mod path_macros;
 use self::path_macros::*;
 
+use std::env;
 use std::fs;
 use std::ffi::CString;
 use std::any::Any;
@@ -123,17 +124,22 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
     let name = &json["body"]["name"].as_str().unwrap();
     let rules = &json["body"]["rules"].as_object().unwrap();
     let mounts = &json["body"]["mounts"].as_array().unwrap();
+    let workdir = &json["body"]["workdir"].as_str().unwrap_or("/");
     let interface = &json["body"]["interface"].as_str().unwrap_or("");
     let entry = &json["body"]["entry"].as_str().unwrap_or("");
     let command = &json["body"]["command"].as_str().unwrap_or("");
     let command = format!("{} {}", entry, command);
+    let envs = serde_json::Map::new();
+    let envs = &json["body"]["env"]
+        .as_object()
+        .unwrap_or(&envs);
 
     let mut jail_map = rules.as_jail_map().unwrap();
     jail_map.insert("path".into(), rootfs.to_owned().into());
     jail_map.insert("name".into(), name.to_owned().into());
     jail_map.insert("persist".into(), true.into());
 
-    println!("{:?}", jail_map);
+    println!("{:#?}", jail_map);
 
     println!("mounts!");
 
@@ -194,6 +200,7 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
                 let (src, dst) = for_exec.clone();
 
+                fs::create_dir_all(&dst)?;
                 mount_nullfs(src.to_owned(), dst.to_owned(), None)?;
                 Ok(Box::new(()) as Box<dyn Any>)
 
@@ -321,6 +328,16 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
             libjail::attach(jid).unwrap();
 
+            fs::create_dir_all(workdir).unwrap();
+            env::set_current_dir(workdir).unwrap();
+
+            for (key, value) in envs.iter() {
+
+                let value = value.as_str().unwrap();
+                env::set_var(key, value);
+
+            }
+
             execvp(&CString::new("/bin/sh").unwrap(), &[
                CString::new("").unwrap(),
                CString::new("-c").unwrap(),
@@ -369,4 +386,3 @@ fn main() -> Result<(), Box<Error>> {
 
     Ok(())
 }
-
