@@ -158,9 +158,9 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
             let (devfs, fdescfs, procfs) = for_exec.clone();
 
-            mount_devfs(devfs, None)?;
-            mount_fdescfs(fdescfs, None)?;
-            mount_procfs(procfs, None)?;
+            mount_devfs(devfs, mount_options!({ "ruleset" => "4" }), None)?;
+            mount_fdescfs(fdescfs, None, None)?;
+            mount_procfs(procfs, None, None)?;
 
             Ok(Box::new(()) as Box<dyn Any>)
         },
@@ -190,7 +190,8 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
             .as_str()
             .unwrap();
 
-        let dst = path_join!(rootfs, dst);
+        let dst = path_resolve!(dst).unwrap();
+        let dst = path_join!(rootfs, &dst);
         let dst = dst.to_str().unwrap().to_owned();
         let for_exec = (src, dst);
         let for_unexec = for_exec.clone();
@@ -201,14 +202,14 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
                 let (src, dst) = for_exec.clone();
 
                 fs::create_dir_all(&dst)?;
-                mount_nullfs(src.to_owned(), dst.to_owned(), None)?;
+                mount_nullfs(src.to_owned(), dst.to_owned(), None, None)?;
                 Ok(Box::new(()) as Box<dyn Any>)
 
             },
             unexec: move {
 
                 let (src, dst) = for_unexec.clone();
-                unmount(dst.to_owned(), None)?;
+                unmount(dst.to_owned(), Some(libc_mount::MNT_FORCE as i32))?;
                 Ok(())
 
             }
