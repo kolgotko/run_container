@@ -7,6 +7,8 @@ extern crate signal_hook;
 extern crate lazy_static;
 extern crate jsonrpc_core;
 extern crate command_pattern;
+extern crate forkpty;
+extern crate uuid;
 
 mod as_jail_map;
 use self::as_jail_map::AsJailMap;
@@ -39,6 +41,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::unix::net::{UnixListener};
 
 use std::fs::File;
+use serde_json::json;
 use serde_json::from_reader;
 use serde_json::Value as JsonValue;
 
@@ -48,6 +51,10 @@ use jsonrpc_core::IoHandler as RpcHandler;
 use jsonrpc_core::Params as RpcParams;
 use jsonrpc_core::Value as RpcValue;
 use jsonrpc_core::Error as RpcError;
+
+use forkpty::*;
+
+use uuid::Uuid;
 
 
 const SOCKET_FILE: &str = "/tmp/run_container.sock";
@@ -77,6 +84,7 @@ lazy_static! {
         let mut rpc_handler = RpcHandler::new();
         rpc_handler.add_method("run_container", run_container);
         rpc_handler.add_method("stop_container", stop_container);
+        rpc_handler.add_method("get_tty", get_tty);
         rpc_handler
 
     };
@@ -102,6 +110,26 @@ fn process_abort() {
 }
 
 
+fn get_tty(params: RpcParams) -> Result<RpcValue, RpcError> {
+
+    let json: JsonValue = params.parse()?;
+    println!("params: {:#?}\n", json["body"]);
+
+    let name = &json["body"]["name"].as_str().unwrap();
+
+    let id = Uuid::new_v4();
+    let id = id.to_hyphenated().to_string();
+    let tmp_dir = path_join!(env::temp_dir(), &id);
+    fs::create_dir_all(&tmp_dir);
+
+    let stdin_path = path_join!(&tmp_dir, "stdin.sock");
+    let stdout_path = path_join!(&tmp_dir, "stdout.sock");
+
+    Ok(json!({
+        "stdin": stdin_path,
+        "stdout": stdout_path
+    }))
+}
 
 fn stop_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
@@ -291,12 +319,12 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
     println!("create_child[fork()]()");
     let fork_result = exec_or_undo_all!(invoker, {
 
-        let result = fork()?;
+        let result = forkpty()?;
         Ok(Box::new(result) as Box<Any>)
 
     }).unwrap();
 
-    let fork_result: ForkResult = fork_result.downcast_ref::<ForkResult>()
+    let fork_result = fork_result.downcast_ref::<ForkPtyResult>()
         .ok_or("fork_result cast error.")
         .unwrap()
         .to_owned();
@@ -310,9 +338,9 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
     }
 
     match fork_result {
-        ForkResult::Parent{ child } => {
+        ForkPtyResult::Parent(child, pty_master) => {
 
-            waitpid(child, None);
+            child.wait();
 
             let mut named_invokers = NAMED_INVOKERS
                 .lock()
@@ -325,7 +353,7 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
             invoker.undo_all();
 
         },
-        ForkResult::Child => {
+        ForkPtyResult::Child(pid) => {
 
             libjail::attach(jid).unwrap();
 

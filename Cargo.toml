@@ -8,6 +8,7 @@ edition = "2018"
 libjail = { git = "https://github.com/kolgotko/libjail" }
 libmount = { git = "https://github.com/kolgotko/libmount" }
 command_pattern = { git = "https://github.com/kolgotko/command-pattern.rs" }
+forkpty = { git = "https://github.com/kolgotko/forkpty" }
 serde_json = "*"
 clap = "*"
 nix = "*"
@@ -15,4 +16,5 @@ lazy_static = "*"
 signal-hook = "*"
 jsonrpc-core = "*"
 path-absolutize = "*"
+uuid = { version = "*", features = ["v4", "v5"] }
 
