@@ -426,6 +426,7 @@ dependencies = [
  "forkpty 0.1.0 (git+https://github.com/kolgotko/forkpty)",
  "jsonrpc-core 9.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.2.44 (registry+https://github.com/rust-lang/crates.io-index)",
  "libjail 0.1.0 (git+https://github.com/kolgotko/libjail)",
  "libmount 0.1.0 (git+https://github.com/kolgotko/libmount)",
  "nix 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)",

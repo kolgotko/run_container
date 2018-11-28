@@ -9,6 +9,7 @@ extern crate jsonrpc_core;
 extern crate command_pattern;
 extern crate forkpty;
 extern crate uuid;
+extern crate libc;
 
 mod as_jail_map;
 use self::as_jail_map::AsJailMap;
@@ -51,6 +52,7 @@ use jsonrpc_core::IoHandler as RpcHandler;
 use jsonrpc_core::Params as RpcParams;
 use jsonrpc_core::Value as RpcValue;
 use jsonrpc_core::Error as RpcError;
+use jsonrpc_core::ErrorCode as RpcErrorCode;
 
 use forkpty::*;
 
@@ -74,6 +76,22 @@ lazy_static! {
     static ref NAMED_INVOKERS: Mutex<HashMap<String, AnyInvoker>> = {
 
         let map: HashMap<String, AnyInvoker> = HashMap::new();
+        let mutex = Mutex::new(map);
+        mutex
+
+    };
+
+    static ref NAMED_TASKS: Mutex<HashMap<String, Box<fn() -> ()> >> = {
+
+        let map: HashMap<String, Box<fn() -> ()>> = HashMap::new();
+        let mutex = Mutex::new(map);
+        mutex
+
+    };
+
+    static ref NAMED_TTY_SESSIONS: Mutex<HashMap<String, PtyMaster>> = {
+
+        let map: HashMap<String, PtyMaster> = HashMap::new();
         let mutex = Mutex::new(map);
         mutex
 
@@ -115,28 +133,103 @@ fn get_tty(params: RpcParams) -> Result<RpcValue, RpcError> {
     let json: JsonValue = params.parse()?;
     println!("params: {:#?}\n", json["body"]);
 
-    let name = &json["body"]["name"].as_str().unwrap();
+    let name = &json["body"]["name"].as_str().unwrap().to_string();
+
+    let (mut out_tty, mut in_tty) = {
+
+        let tty_sessions = NAMED_TTY_SESSIONS.lock().unwrap();
+
+        if !tty_sessions.contains_key(name) {
+            let mut error = RpcError::new(RpcErrorCode::ServerError(-404));
+            error.message = "tty session not found".to_string();
+            return Err(error);
+        }
+
+        let tty = tty_sessions.get(name).unwrap();
+
+        (tty.clone(), tty.clone())
+
+    };
 
     let id = Uuid::new_v4();
     let id = id.to_hyphenated().to_string();
     let tmp_dir = path_join!(env::temp_dir(), &id);
-    fs::create_dir_all(&tmp_dir);
+    fs::create_dir_all(&tmp_dir).unwrap();
 
-    let stdin_path = path_join!(&tmp_dir, "stdin.sock");
-    let stdout_path = path_join!(&tmp_dir, "stdout.sock");
+    let input_path = path_join!(&tmp_dir, "in.sock");
+    let output_path = path_join!(&tmp_dir, "out.sock");
+
+    let io_paths = (input_path.clone(), output_path.clone());
+
+    thread::spawn(move || {
+
+        let (input_path, output_path) = io_paths;
+
+        let out_listener = UnixListener::bind(&output_path).unwrap();
+        let in_listener = UnixListener::bind(&input_path).unwrap();
+
+        let out_thread = thread::spawn(move || {
+
+            let (mut out_stream, _) = out_listener.accept().unwrap();
+            let mut buffer: Vec<u8> = vec![0; libc::BUFSIZ as usize];
+
+            loop {
+                let count = out_tty.read(&mut buffer).unwrap();
+                out_stream.write(&buffer[0..count]).unwrap();
+                out_stream.flush().unwrap();
+            }
+
+        });
+
+        let in_thread = thread::spawn(move || {
+
+            let (mut in_stream, _) = in_listener.accept().unwrap();
+
+            for byte in in_stream.bytes() {
+                in_tty.write(&[byte.unwrap()]);
+            }
+
+        });
+
+        out_thread.join();
+        in_thread.join();
+
+        println!("close remote tty session");
+
+    });
 
     Ok(json!({
-        "stdin": stdin_path,
-        "stdout": stdout_path
+        "input": input_path,
+        "output": output_path
     }))
 }
 
 fn stop_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
+    let json: JsonValue = params.parse()?;
+    let name = &json["body"]["name"].as_str().unwrap();
 
-    unimplemented!();
+    {
+        let mut named_invokers = NAMED_INVOKERS
+            .lock()
+            .unwrap();
 
-    Ok(RpcValue::Null)
+        let invoker = named_invokers
+            .remove(&name.to_string());
+
+        match invoker {
+            Some(mut invoker) => {
+                invoker.undo_all();
+                Ok(json!(true))
+            },
+            None => {
+                let mut error = RpcError::new(RpcErrorCode::ServerError(-404));
+                error.message = "container not found".to_string();
+                Err(error)
+            }
+        }
+
+    }
 
 }
 
@@ -340,17 +433,36 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
     match fork_result {
         ForkPtyResult::Parent(child, pty_master) => {
 
-            child.wait();
+            {
+                let mut tty_sessions = NAMED_TTY_SESSIONS.lock().unwrap();
+                tty_sessions.insert(name.to_string(), pty_master.clone());
+            }
 
-            let mut named_invokers = NAMED_INVOKERS
-                .lock()
-                .unwrap();
+            let child = child.clone();
+            let name = name.to_string();
 
-            let mut invoker = named_invokers
-                .remove(name.to_owned())
-                .unwrap();
+            thread::spawn(move || {
 
-            invoker.undo_all();
+                child.wait();
+
+                let mut named_invokers = NAMED_INVOKERS
+                    .lock()
+                    .unwrap();
+
+                let invoker = named_invokers
+                    .remove(&name);
+
+                if let Some(mut invoker) = invoker {
+                    invoker.undo_all();
+                }
+
+                {
+                    let mut tty_sessions = NAMED_TTY_SESSIONS.lock().unwrap();
+                    tty_sessions.remove(&name);
+                }
+
+
+            });
 
         },
         ForkPtyResult::Child(pid) => {

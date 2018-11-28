@@ -16,5 +16,6 @@ lazy_static = "*"
 signal-hook = "*"
 jsonrpc-core = "*"
 path-absolutize = "*"
+libc = "*"
 uuid = { version = "*", features = ["v4", "v5"] }
 
