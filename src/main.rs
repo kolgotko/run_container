@@ -32,6 +32,7 @@ use std::error::Error;
 use std::process;
 use std::collections::HashMap;
 use std::thread;
+use std::thread::Builder as ThreadBuilder;
 use std::os::unix::net::UnixStream;
 use std::os::unix::io::AsRawFd;
 use std::net::Shutdown;
@@ -147,7 +148,7 @@ fn get_tty(params: RpcParams) -> Result<RpcValue, RpcError> {
 
         let tty = tty_sessions.get(name).unwrap();
 
-        (tty.clone(), tty.clone())
+        (tty.get_reader().unwrap(), tty.get_writer().unwrap())
 
     };
 
@@ -160,39 +161,91 @@ fn get_tty(params: RpcParams) -> Result<RpcValue, RpcError> {
     let output_path = path_join!(&tmp_dir, "out.sock");
 
     let io_paths = (input_path.clone(), output_path.clone());
+    let for_thread = (name.to_owned(), io_paths);
 
-    thread::spawn(move || {
+    ThreadBuilder::new()
+        .name("tty thread wrapper".to_string())
+        .spawn(move || {
 
+        let (name, io_paths) = for_thread;
         let (input_path, output_path) = io_paths;
 
         let out_listener = UnixListener::bind(&output_path).unwrap();
         let in_listener = UnixListener::bind(&input_path).unwrap();
 
-        let out_thread = thread::spawn(move || {
+        let (mut out_stream, _) = out_listener.accept().unwrap();
+        let (mut in_stream, _) = in_listener.accept().unwrap();
 
-            let (mut out_stream, _) = out_listener.accept().unwrap();
-            let mut buffer: Vec<u8> = vec![0; libc::BUFSIZ as usize];
+        let mut in_stream_clone = in_stream.try_clone().unwrap();
+        let mut out_stream_clone = out_stream.try_clone().unwrap();
 
-            loop {
-                let count = out_tty.read(&mut buffer).unwrap();
-                out_stream.write(&buffer[0..count]).unwrap();
-                out_stream.flush().unwrap();
-            }
+        let out_thread = ThreadBuilder::new()
+            .name("tty output thread".to_string())
+            .spawn(move || {
 
-        });
+                for bytes in out_tty.bytes() {
 
-        let in_thread = thread::spawn(move || {
+                    match bytes {
 
-            let (mut in_stream, _) = in_listener.accept().unwrap();
+                        Ok(bytes) => {
 
-            for byte in in_stream.bytes() {
-                in_tty.write(&[byte.unwrap()]);
-            }
+                            let result = out_stream.write(&[bytes]);
+                            if let Err(_) = result { break; }
 
-        });
+                        },
+                        _ => { break; },
+
+                    }
+
+                }
+
+                out_stream.shutdown(Shutdown::Both);
+                in_stream_clone.shutdown(Shutdown::Both);
+
+            }).unwrap();
+
+        let in_thread = ThreadBuilder::new()
+            .name("tty input thread".to_string())
+            .spawn(move || {
+
+                let mut in_stream_clone = in_stream.try_clone().unwrap();
+
+                for bytes in in_stream.bytes() {
+
+                    match bytes {
+
+                        Ok(bytes) => {
+
+                            let result = in_tty.write(&[bytes]);
+                            if let Err(_) = result { break; }
+
+                        },
+                        Err(_) => { break; }
+
+                    }
+
+                }
+
+                in_stream_clone.shutdown(Shutdown::Both);
+                out_stream_clone.shutdown(Shutdown::Both);
+
+                // NOT WORKING
+                {
+                    let mut tty_sessions = NAMED_TTY_SESSIONS.lock().unwrap();
+                    if let Some(tty) = tty_sessions.remove(&name) {
+
+                        let tty_clone = tty.clone();
+                        tty_sessions.insert(name, tty_clone);
+
+                    }
+                }
+
+            }).unwrap();
 
         out_thread.join();
+        println!("close out thread");
         in_thread.join();
+        println!("close in thread");
 
         println!("close remote tty session");
 
@@ -422,24 +475,42 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
         .unwrap()
         .to_owned();
 
-    {
-        let mut named_invokers = NAMED_INVOKERS
-            .lock()
-            .unwrap();
-
-        named_invokers.insert(name.to_string(), invoker);
-    }
 
     match fork_result {
         ForkPtyResult::Parent(child, pty_master) => {
 
+            let name = name.to_string();
+
+            let for_exec = (name.clone(), pty_master.clone());
+            let for_unexec = (name.clone(), );
+
+            exec_or_undo_all!(invoker, {
+                exec: move {
+
+                    let (name, pty_master) = for_exec.clone();
+                    let mut tty_sessions = NAMED_TTY_SESSIONS.lock().unwrap();
+                    tty_sessions.insert(name.to_string(), pty_master);
+
+                    Ok(Box::new(()) as Box<Any>)
+                },
+                unexec: move {
+
+                    let (name, ) = for_unexec.clone();
+                    let mut tty_sessions = NAMED_TTY_SESSIONS.lock().unwrap();
+                    tty_sessions.remove(&name.to_string());
+                    Ok(())
+                }
+            }).unwrap();
+
             {
-                let mut tty_sessions = NAMED_TTY_SESSIONS.lock().unwrap();
-                tty_sessions.insert(name.to_string(), pty_master.clone());
+                let mut named_invokers = NAMED_INVOKERS
+                    .lock()
+                    .unwrap();
+
+                named_invokers.insert(name.to_string(), invoker);
             }
 
             let child = child.clone();
-            let name = name.to_string();
 
             thread::spawn(move || {
 
@@ -455,12 +526,6 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
                 if let Some(mut invoker) = invoker {
                     invoker.undo_all();
                 }
-
-                {
-                    let mut tty_sessions = NAMED_TTY_SESSIONS.lock().unwrap();
-                    tty_sessions.remove(&name);
-                }
-
 
             });
 
