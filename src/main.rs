@@ -36,8 +36,8 @@ use std::thread::Builder as ThreadBuilder;
 use std::os::unix::net::UnixStream;
 use std::os::unix::io::AsRawFd;
 use std::net::Shutdown;
-use std::io::Read;
-use std::io::Write;
+use std::io;
+use std::io::{ Read, Write };
 use std::path::Path;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::unix::net::{UnixListener};
@@ -90,9 +90,9 @@ lazy_static! {
 
     };
 
-    static ref NAMED_TTY_SESSIONS: Mutex<HashMap<String, PtyMaster>> = {
+    static ref NAMED_TTY_SESSIONS: Mutex<HashMap<String, Arc<PtyMaster>>> = {
 
-        let map: HashMap<String, PtyMaster> = HashMap::new();
+        let map: HashMap<String, Arc<PtyMaster>> = HashMap::new();
         let mutex = Mutex::new(map);
         mutex
 
@@ -152,6 +152,9 @@ fn get_tty(params: RpcParams) -> Result<RpcValue, RpcError> {
 
     };
 
+    out_tty.set_nonblocking(true).unwrap();
+    out_tty.set_timeout(5000).unwrap();
+
     let id = Uuid::new_v4();
     let id = id.to_hyphenated().to_string();
     let tmp_dir = path_join!(env::temp_dir(), &id);
@@ -193,7 +196,17 @@ fn get_tty(params: RpcParams) -> Result<RpcValue, RpcError> {
                             if let Err(_) = result { break; }
 
                         },
-                        _ => { break; },
+                        Err(error) => {
+
+                            if let io::ErrorKind::TimedOut = error.kind() {
+
+                                let result = out_stream.write(&[]);
+                                if let Err(_) = result { break; }
+                                continue;
+
+                            } else { break; }
+
+                        }
 
                     }
 
@@ -438,11 +451,13 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
                 process::Command::new("ifconfig")
                     .args(&[&exec_if, "name", "eth0"])
-                    .spawn()?;
+                    .spawn()?
+                    .wait()?;
 
                 process::Command::new("ifconfig")
                     .args(&["eth0", "vnet", &jid.to_string()])
-                    .spawn()?;
+                    .spawn()?
+                    .wait()?;
 
                 Ok(Box::new(()) as Box<dyn Any>)
             },
@@ -450,11 +465,13 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
                 process::Command::new("ifconfig")
                     .args(&["eth0", "-vnet", &jid.to_string()])
-                    .spawn();
+                    .spawn()?
+                    .wait()?;
 
                 process::Command::new("ifconfig")
                     .args(&["eth0", "name", &unexec_if])
-                    .spawn()?;
+                    .spawn()?
+                    .wait()?;
 
                 Ok(())
             }
@@ -470,25 +487,24 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
     }).unwrap();
 
-    let fork_result = fork_result.downcast_ref::<ForkPtyResult>()
+    let fork_result: &ForkPtyResult = fork_result.downcast_ref::<ForkPtyResult>()
         .ok_or("fork_result cast error.")
         .unwrap()
         .to_owned();
 
 
-    match fork_result {
+    match &fork_result {
         ForkPtyResult::Parent(child, pty_master) => {
 
             let name = name.to_string();
-
-            let for_exec = (name.clone(), pty_master.clone());
+            let for_exec = (name.clone(), Arc::new(pty_master.clone()));
             let for_unexec = (name.clone(), );
 
             exec_or_undo_all!(invoker, {
                 exec: move {
 
                     let (name, pty_master) = for_exec.clone();
-                    let mut tty_sessions = NAMED_TTY_SESSIONS.lock().unwrap();
+                    let mut tty_sessions = NAMED_TTY_SESSIONS.lock()?;
                     tty_sessions.insert(name.to_string(), pty_master);
 
                     Ok(Box::new(()) as Box<Any>)
@@ -496,8 +512,9 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
                 unexec: move {
 
                     let (name, ) = for_unexec.clone();
-                    let mut tty_sessions = NAMED_TTY_SESSIONS.lock().unwrap();
+                    let mut tty_sessions = NAMED_TTY_SESSIONS.lock()?;
                     tty_sessions.remove(&name.to_string());
+
                     Ok(())
                 }
             }).unwrap();

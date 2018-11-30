@@ -3,7 +3,6 @@ extern crate path_absolutize;
 pub use std::path::{ Path, PathBuf, MAIN_SEPARATOR };
 pub use path_absolutize::*;
 
-
 #[macro_export]
 macro_rules! path_join {
     ($prefix:expr, $($child:expr),+) => {
