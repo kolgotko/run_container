@@ -242,17 +242,6 @@ fn get_tty(params: RpcParams) -> Result<RpcValue, RpcError> {
                 in_stream_clone.shutdown(Shutdown::Both);
                 out_stream_clone.shutdown(Shutdown::Both);
 
-                // NOT WORKING
-                {
-                    let mut tty_sessions = NAMED_TTY_SESSIONS.lock().unwrap();
-                    if let Some(tty) = tty_sessions.remove(&name) {
-
-                        let tty_clone = tty.clone();
-                        tty_sessions.insert(name, tty_clone);
-
-                    }
-                }
-
             }).unwrap();
 
         out_thread.join();
@@ -497,7 +486,7 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
         ForkPtyResult::Parent(child, pty_master) => {
 
             let name = name.to_string();
-            let for_exec = (name.clone(), Arc::new(pty_master.clone()));
+            let for_exec = (name.clone(), Arc::new(pty_master.try_clone().unwrap()));
             let for_unexec = (name.clone(), );
 
             exec_or_undo_all!(invoker, {
