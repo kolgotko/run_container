@@ -168,15 +168,15 @@ fn get_tty(params: RpcParams) -> Result<RpcValue, RpcError> {
     let io_paths = (input_path.clone(), output_path.clone());
     let for_thread = (name.to_owned(), io_paths);
 
+    let out_listener = UnixListener::bind(&output_path).unwrap();
+    let in_listener = UnixListener::bind(&input_path).unwrap();
+
     ThreadBuilder::new()
         .name("tty thread wrapper".to_string())
         .spawn(move || {
 
         let (name, io_paths) = for_thread;
         let (input_path, output_path) = io_paths;
-
-        let out_listener = UnixListener::bind(&output_path).unwrap();
-        let in_listener = UnixListener::bind(&input_path).unwrap();
 
         let (mut out_stream, _) = out_listener.accept().unwrap();
         let (mut in_stream, _) = in_listener.accept().unwrap();
