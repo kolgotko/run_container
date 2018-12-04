@@ -133,7 +133,7 @@ dependencies = [
 [[package]]
 name = "command_pattern"
 version = "0.1.0"
-source = "git+https://github.com/kolgotko/command-pattern.rs#5ae68cfcf6e2a8d578c7f560dfb86319d08d9503"
+source = "git+https://github.com/kolgotko/command-pattern.rs#eba781b92bbdcf1fa831ff36ac9df160259c2520"
 
 [[package]]
 name = "env_logger"
@@ -238,7 +238,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "libjail"
 version = "0.1.0"
-source = "git+https://github.com/kolgotko/libjail#e4a59a34023e25f8e249aac73ca15ecf044103e5"
+source = "git+https://github.com/kolgotko/libjail#d981d071e263915f009259b98c368c7e3847b921"
 dependencies = [
  "lazy_static 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.44 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -257,7 +257,7 @@ dependencies = [
 [[package]]
 name = "libmount"
 version = "0.1.0"
-source = "git+https://github.com/kolgotko/libmount#1cf0689ad576040e1b466b2ddbe11961ed1faf6c"
+source = "git+https://github.com/kolgotko/libmount#7b21a83c88c7a0d9ff2ac17413646b25fb4ca536"
 dependencies = [
  "bindgen 0.44.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.44 (registry+https://github.com/rust-lang/crates.io-index)",

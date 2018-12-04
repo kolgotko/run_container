@@ -1,3 +1,4 @@
+#![feature(try_from)]
 extern crate libjail;
 extern crate libmount;
 extern crate serde_json;
@@ -20,6 +21,7 @@ use self::path_macros::*;
 use std::env;
 use std::fs;
 use std::ffi::CString;
+use std::convert::TryInto;
 use std::any::Any;
 use libmount::*;
 use libjail::*;
@@ -311,9 +313,9 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
         .unwrap_or(&envs);
 
     let mut jail_map = rules.as_jail_map().unwrap();
-    jail_map.insert("path".into(), rootfs.to_owned().into());
-    jail_map.insert("name".into(), name.to_owned().into());
-    jail_map.insert("persist".into(), true.into());
+    jail_map.insert("path".try_into().unwrap(), rootfs.to_owned().try_into().unwrap());
+    jail_map.insert("name".try_into().unwrap(), name.to_owned().try_into().unwrap());
+    jail_map.insert("persist".try_into().unwrap(), true.try_into().unwrap());
 
     println!("{:#?}", jail_map);
 
@@ -334,7 +336,7 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
             let (devfs, fdescfs, procfs) = for_exec.clone();
 
-            mount_devfs(devfs, mount_options!({ "ruleset" => "4" }), None)?;
+            mount_devfs(devfs, mount_options!({ "ruleset" => "4" })?, None)?;
             mount_fdescfs(fdescfs, None, None)?;
             mount_procfs(procfs, None, None)?;
 

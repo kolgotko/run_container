@@ -8,6 +8,7 @@ use serde_json::Value as JsonValue;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::error::Error;
 use std::collections::HashMap;
+use std::convert::TryInto;
 
 type JailMap = HashMap<Val, Val>;
 
@@ -24,7 +25,7 @@ impl AsJailMap for JsonMap<String, JsonValue> {
 
         for (rule, rule_type) in all_rules.iter() {
 
-            let jail_key: JailValue = rule.clone().into();
+            let jail_key: JailValue = rule.clone().try_into()?;
 
             let value = self.get(rule);
             if value.is_none() { continue; }
@@ -45,15 +46,15 @@ impl AsJailMap for JsonMap<String, JsonValue> {
                         }
                         _ => value.as_u64().ok_or("type error")? as i32,
                     };
-                    out_map.insert(jail_key, int.into());
+                    out_map.insert(jail_key, int.try_into()?);
                 },
                 RuleType::Ulong => {
                     let int = value.as_u64().ok_or("type error")?;
-                    out_map.insert(jail_key, int.into());
+                    out_map.insert(jail_key, int.try_into()?);
                 },
                 RuleType::String => {
                     let st = value.as_str().ok_or("type error")?;;
-                    out_map.insert(jail_key, st.into());
+                    out_map.insert(jail_key, st.try_into()?);
                 },
                 RuleType::Ip4 => {
 
@@ -64,7 +65,7 @@ impl AsJailMap for JsonMap<String, JsonValue> {
                         },
                     };
 
-                    out_map.insert(jail_key, ip.into());
+                    out_map.insert(jail_key, ip.try_into()?);
                 },
                 RuleType::Ip6 => {
 
@@ -75,7 +76,7 @@ impl AsJailMap for JsonMap<String, JsonValue> {
                         },
                     };
 
-                    out_map.insert(jail_key, ip.into());
+                    out_map.insert(jail_key, ip.try_into()?);
                 },
                 _ => { Err("unknown type")? },
             }
