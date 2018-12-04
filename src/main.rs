@@ -250,8 +250,9 @@ fn get_tty(params: RpcParams) -> Result<RpcValue, RpcError> {
         println!("close out thread");
         in_thread.join();
         println!("close in thread");
-
         println!("close remote tty session");
+
+        fs::remove_dir_all(&tmp_dir).unwrap();
 
     });
 
