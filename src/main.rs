@@ -50,6 +50,7 @@ use serde_json::from_reader;
 use serde_json::Value as JsonValue;
 
 use std::sync::{Arc, Mutex};
+use std::sync::mpsc::*;
 
 use jsonrpc_core::IoHandler as RpcHandler;
 use jsonrpc_core::Params as RpcParams;
@@ -64,9 +65,45 @@ use uuid::Uuid;
 
 const SOCKET_FILE: &str = "/tmp/run_container.sock";
 
+#[derive(Debug)]
+enum StopCause {
+    Signal(nix::sys::signal::Signal),
+    Exited(i32),
+    Request,
+    Undefined,
+}
+
+impl From<WaitStatus> for StopCause {
+    fn from(value: WaitStatus) -> Self {
+        match value {
+            WaitStatus::Signaled(_, signal, _) => {
+                StopCause::Signal(signal)
+            },
+            WaitStatus::Exited(_, code) => {
+                StopCause::Exited(code)
+            },
+            _ => StopCause::Undefined
+        }
+    }
+}
+
+#[derive(Debug)]
+enum Events {
+    ContainerStoped(String, StopCause),
+    ContainerStarted(String),
+}
+
 type AnyInvoker = Invoker<Box<dyn Any>>;
 
 lazy_static! {
+
+    static ref SUBSCRIBERS: Mutex<Vec<Sender<Events>>> = {
+
+        let vec: Vec<_> = Vec::new();
+        let mutex = Mutex::new(vec);
+        mutex
+
+    };
 
     static ref WORKING_JAILS: Mutex<Vec<i32>> = {
 
@@ -105,6 +142,7 @@ lazy_static! {
         let mut rpc_handler = RpcHandler::new();
         rpc_handler.add_method("run_container", run_container);
         rpc_handler.add_method("stop_container", stop_container);
+        rpc_handler.add_method("wait_container", wait_container);
         rpc_handler.add_method("get_tty", get_tty);
         rpc_handler
 
@@ -130,6 +168,33 @@ fn process_abort() {
 
 }
 
+fn wait_container(params: RpcParams) -> Result<RpcValue, RpcError> {
+
+    let json: JsonValue = params.parse()?;
+
+    let rx = {
+
+        let mut subscribers = SUBSCRIBERS.lock().unwrap();
+        let (tx, rx) = channel::<Events>();
+        subscribers.push(tx);
+        rx
+
+    };
+
+    loop {
+        let event = rx.recv().unwrap();
+
+        match &event {
+            Events::ContainerStoped(name, cause) => {
+                break;
+            },
+            _ => continue,
+        }
+    }
+
+    Ok(RpcValue::Null)
+
+}
 
 fn get_tty(params: RpcParams) -> Result<RpcValue, RpcError> {
 
@@ -519,11 +584,11 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
                 named_invokers.insert(name.to_string(), invoker);
             }
 
-            let child = child.clone();
-
+            let for_thread = (name.clone(), child.clone());
             thread::spawn(move || {
 
-                child.wait();
+                let (name, child) = for_thread;
+                let wait_result = child.wait(None).unwrap();
 
                 let mut named_invokers = NAMED_INVOKERS
                     .lock()
@@ -534,6 +599,12 @@ fn run_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
                 if let Some(mut invoker) = invoker {
                     invoker.undo_all();
+                }
+
+                let mut subscribers = SUBSCRIBERS.lock().unwrap();
+                for tx in subscribers.iter() {
+                    let event = Events::ContainerStoped(name.to_string(), wait_result.into());
+                    tx.send(event);
                 }
 
             });

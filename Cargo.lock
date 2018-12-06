@@ -170,7 +170,7 @@ dependencies = [
 [[package]]
 name = "forkpty"
 version = "0.1.0"
-source = "git+https://github.com/kolgotko/forkpty#61eb9aefdb44d4e76f5b8c911ff761eebafbc6c6"
+source = "git+https://github.com/kolgotko/forkpty#a4d1f28d265114037ab6bdfda898289bd6284aa8"
 dependencies = [
  "libc 0.2.44 (registry+https://github.com/rust-lang/crates.io-index)",
  "nix 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
