@@ -69,7 +69,6 @@ const SOCKET_FILE: &str = "/tmp/run_container.sock";
 enum StopCause {
     Signal(nix::sys::signal::Signal),
     Exited(i32),
-    Request,
     Undefined,
 }
 
@@ -171,6 +170,7 @@ fn process_abort() {
 fn wait_container(params: RpcParams) -> Result<RpcValue, RpcError> {
 
     let json: JsonValue = params.parse()?;
+    let name = json["body"]["name"].as_str().unwrap().to_string();
 
     let rx = {
 
@@ -184,9 +184,30 @@ fn wait_container(params: RpcParams) -> Result<RpcValue, RpcError> {
     loop {
         let event = rx.recv().unwrap();
 
-        match &event {
-            Events::ContainerStoped(name, cause) => {
-                break;
+        match event {
+            Events::ContainerStoped(container, cause) => {
+
+                if container != name { continue; }
+                match cause {
+                    StopCause::Signal(signal) => {
+                        return Ok(json!({
+                            "code": JsonValue::Null,
+                            "signal": format!("{:?}", signal)
+                        }));
+                    },
+                    StopCause::Exited(code) => {
+                        return Ok(json!({
+                            "code": code,
+                            "signal": JsonValue::Null
+                        }));
+                    },
+                    StopCause::Undefined => {
+                        let mut error = RpcError::new(RpcErrorCode::ServerError(-500));
+                        error.message = "stop cause is undefined".to_string();
+                        return Err(error);
+                    }
+                }
+
             },
             _ => continue,
         }
