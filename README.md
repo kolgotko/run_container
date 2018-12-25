@@ -1,4 +1,5 @@
 # run_container
+Daemon driven through json-rpc, for actions on containers
 
 demo:
 
