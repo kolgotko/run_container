@@ -9,6 +9,7 @@ libjail = { git = "https://github.com/kolgotko/libjail" }
 libmount = { git = "https://github.com/kolgotko/libmount" }
 command_pattern = { git = "https://github.com/kolgotko/command-pattern.rs" }
 forkpty = { git = "https://github.com/kolgotko/forkpty" }
+serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 clap = "*"
 nix = "*"
